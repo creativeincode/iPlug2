@@ -41,6 +41,10 @@
 #include "IPlugWebView.h"
 #include "IPlugPaths.h"
 
+#ifndef IPLUG_WEBVIEW_ENABLE_PRIVATE_KVC
+#define IPLUG_WEBVIEW_ENABLE_PRIVATE_KVC 0
+#endif
+
 namespace iplug {
 extern bool GetResourcePathFromBundle(const char* fileName, const char* searchExt, WDL_String& fullPath, const char* bundleID);
 }
@@ -163,17 +167,20 @@ void* IWebViewImpl::OpenWebView(void* pParent, float x, float y, float w, float 
   WKUserContentController* controller = [[WKUserContentController alloc] init];
   webConfig.userContentController = controller;
 
-  [webConfig setValue:@YES forKey:@"allowUniversalAccessFromFileURLs"];
   auto* scriptMessageHandler = [[IPLUG_WKSCRIPTMESSAGEHANDLER alloc] initWithIWebView: mIWebView];
   [controller addScriptMessageHandler: scriptMessageHandler name:@"callback"];
 
   if (mIWebView->GetEnableDevTools())
   {
+#if IPLUG_WEBVIEW_ENABLE_PRIVATE_KVC
     [preferences setValue:@YES forKey:@"developerExtrasEnabled"];
+#endif
   }
   
+#if IPLUG_WEBVIEW_ENABLE_PRIVATE_KVC
   [preferences setValue:@YES forKey:@"DOMPasteAllowed"];
   [preferences setValue:@YES forKey:@"javaScriptCanAccessClipboard"];
+#endif
   
   webConfig.preferences = preferences;
   if (@available(macOS 10.13, *))
@@ -230,7 +237,9 @@ void* IWebViewImpl::OpenWebView(void* pParent, float x, float y, float w, float 
 #if defined OS_MAC
   if (isTransparent)
   {
+#if IPLUG_WEBVIEW_ENABLE_PRIVATE_KVC
     [wkWebView setValue:@(NO) forKey:@"drawsBackground"];
+#endif
   }
   
   [wkWebView setAllowsMagnification:NO];
@@ -356,7 +365,8 @@ void IWebViewImpl::LoadFile(const char* fileName, const char* _Nullable bundleID
   }
   else
   {
-    NSURL* rootUrl = [NSURL URLWithString:webroot relativeToURL:nil];
+    NSURL* pageUrl = [NSURL fileURLWithPath:pPath isDirectory:NO];
+    NSURL* rootUrl = [NSURL fileURLWithPath:[NSString stringWithUTF8String:mWebRoot.Get()] isDirectory:YES];
     [mWKWebView loadFileURL:pageUrl allowingReadAccessToURL:rootUrl];
   }
 }
