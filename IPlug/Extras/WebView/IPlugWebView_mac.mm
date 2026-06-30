@@ -153,6 +153,10 @@ IWebViewImpl::~IWebViewImpl()
 
 void* IWebViewImpl::OpenWebView(void* pParent, float x, float y, float w, float h, float scale)
 {
+  if (mWKWebView) {
+    CloseWebView();
+  }
+
   WKWebViewConfiguration* webConfig = [[WKWebViewConfiguration alloc] init];
   WKPreferences* preferences = [[WKPreferences alloc] init];
   
@@ -251,12 +255,23 @@ void* IWebViewImpl::OpenWebView(void* pParent, float x, float y, float w, float 
 
 void IWebViewImpl::CloseWebView()
 {
+  if (mWKWebView) {
+    [mWKWebView stopLoading];
+    [mWKWebView setNavigationDelegate:nil];
+    [mWKWebView setUIDelegate:nil];
+  }
+  if (mWebConfig && mWebConfig.userContentController) {
+    [mWebConfig.userContentController removeScriptMessageHandlerForName:@"callback"];
+    [mWebConfig.userContentController removeAllUserScripts];
+  }
+
   [mWKWebView removeFromSuperview];
   
-  mWebConfig = nil;
-  mWKWebView = nil;
-  mScriptMessageHandler = nil;
+  mUIDelegate = nil;
   mNavigationDelegate = nil;
+  mScriptMessageHandler = nil;
+  mWKWebView = nil;
+  mWebConfig = nil;
 }
 
 void IWebViewImpl::HideWebView(bool hide)
@@ -353,6 +368,8 @@ void IWebViewImpl::ReloadPageContent()
 
 void IWebViewImpl::EvaluateJavaScript(const char* scriptStr, IWebView::completionHandlerFunc func)
 {
+  if (!mWKWebView) return;
+
   if (mWKWebView && ![mWKWebView isLoading])
   {
     [mWKWebView evaluateJavaScript:[NSString stringWithUTF8String:scriptStr] completionHandler:^(NSString *result, NSError *error) {
