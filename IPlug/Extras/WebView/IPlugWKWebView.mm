@@ -139,7 +139,7 @@
         }
     }
     
-    return YES;
+    return [super performKeyEquivalent:event];
 }
 #endif
 @end

@@ -41,6 +41,10 @@
 #include "IPlugWebView.h"
 #include "IPlugPaths.h"
 
+#ifndef IPLUG_WEBVIEW_ENABLE_PRIVATE_KVC
+#define IPLUG_WEBVIEW_ENABLE_PRIVATE_KVC 0
+#endif
+
 namespace iplug {
 extern bool GetResourcePathFromBundle(const char* fileName, const char* searchExt, WDL_String& fullPath, const char* bundleID);
 }
@@ -153,23 +157,30 @@ IWebViewImpl::~IWebViewImpl()
 
 void* IWebViewImpl::OpenWebView(void* pParent, float x, float y, float w, float h, float scale)
 {
+  if (mWKWebView) {
+    CloseWebView();
+  }
+
   WKWebViewConfiguration* webConfig = [[WKWebViewConfiguration alloc] init];
   WKPreferences* preferences = [[WKPreferences alloc] init];
   
   WKUserContentController* controller = [[WKUserContentController alloc] init];
   webConfig.userContentController = controller;
 
-  [webConfig setValue:@YES forKey:@"allowUniversalAccessFromFileURLs"];
   auto* scriptMessageHandler = [[IPLUG_WKSCRIPTMESSAGEHANDLER alloc] initWithIWebView: mIWebView];
   [controller addScriptMessageHandler: scriptMessageHandler name:@"callback"];
 
   if (mIWebView->GetEnableDevTools())
   {
+#if IPLUG_WEBVIEW_ENABLE_PRIVATE_KVC
     [preferences setValue:@YES forKey:@"developerExtrasEnabled"];
+#endif
   }
   
+#if IPLUG_WEBVIEW_ENABLE_PRIVATE_KVC
   [preferences setValue:@YES forKey:@"DOMPasteAllowed"];
   [preferences setValue:@YES forKey:@"javaScriptCanAccessClipboard"];
+#endif
   
   webConfig.preferences = preferences;
   if (@available(macOS 10.13, *))
@@ -200,13 +211,13 @@ void* IWebViewImpl::OpenWebView(void* pParent, float x, float y, float w, float 
   
   // this script receives global key down events and forwards them to the C++ side
   [controller addUserScript:[[WKUserScript alloc] initWithSource:
-                             @"document.addEventListener('keydown', function(e) { if(document.activeElement.type != \"text\" && e.keyCode !== 32) { IPlugSendMsg({'msg': 'SKPFUI', 'keyCode': e.keyCode, 'utf8': e.key, 'S': e.shiftKey, 'C': e.ctrlKey, 'A': e.altKey, 'isUp': false}); e.preventDefault(); }});"
+                             @"document.addEventListener('keydown', function(e) { if(document.activeElement.type != \"text\" && e.keyCode !== 32) { IPlugSendMsg({'msg': 'SKPFUI', 'keyCode': e.keyCode, 'utf8': e.key, 'S': e.shiftKey, 'C': e.ctrlKey, 'A': e.altKey, 'isUp': false}); }});"
                              injectionTime:WKUserScriptInjectionTimeAtDocumentStart
                              forMainFrameOnly:YES]];
   
   // this script receives global key up events and forwards them to the C++ side
   [controller addUserScript:[[WKUserScript alloc] initWithSource:
-                             @"document.addEventListener('keyup', function(e) { if(document.activeElement.type != \"text\" && e.keyCode !== 32) { IPlugSendMsg({'msg': 'SKPFUI', 'keyCode': e.keyCode, 'utf8': e.key, 'S': e.shiftKey, 'C': e.ctrlKey, 'A': e.altKey, 'isUp': true}); e.preventDefault(); }});"
+                             @"document.addEventListener('keyup', function(e) { if(document.activeElement.type != \"text\" && e.keyCode !== 32) { IPlugSendMsg({'msg': 'SKPFUI', 'keyCode': e.keyCode, 'utf8': e.key, 'S': e.shiftKey, 'C': e.ctrlKey, 'A': e.altKey, 'isUp': true}); }});"
                              injectionTime:WKUserScriptInjectionTimeAtDocumentStart
                              forMainFrameOnly:YES]];
   
@@ -226,7 +237,9 @@ void* IWebViewImpl::OpenWebView(void* pParent, float x, float y, float w, float 
 #if defined OS_MAC
   if (isTransparent)
   {
+#if IPLUG_WEBVIEW_ENABLE_PRIVATE_KVC
     [wkWebView setValue:@(NO) forKey:@"drawsBackground"];
+#endif
   }
   
   [wkWebView setAllowsMagnification:NO];
@@ -251,12 +264,23 @@ void* IWebViewImpl::OpenWebView(void* pParent, float x, float y, float w, float 
 
 void IWebViewImpl::CloseWebView()
 {
+  if (mWKWebView) {
+    [mWKWebView stopLoading];
+    [mWKWebView setNavigationDelegate:nil];
+    [mWKWebView setUIDelegate:nil];
+  }
+  if (mWebConfig && mWebConfig.userContentController) {
+    [mWebConfig.userContentController removeScriptMessageHandlerForName:@"callback"];
+    [mWebConfig.userContentController removeAllUserScripts];
+  }
+
   [mWKWebView removeFromSuperview];
   
-  mWebConfig = nil;
-  mWKWebView = nil;
-  mScriptMessageHandler = nil;
+  mUIDelegate = nil;
   mNavigationDelegate = nil;
+  mScriptMessageHandler = nil;
+  mWKWebView = nil;
+  mWebConfig = nil;
 }
 
 void IWebViewImpl::HideWebView(bool hide)
@@ -341,7 +365,8 @@ void IWebViewImpl::LoadFile(const char* fileName, const char* _Nullable bundleID
   }
   else
   {
-    NSURL* rootUrl = [NSURL URLWithString:webroot relativeToURL:nil];
+    NSURL* pageUrl = [NSURL fileURLWithPath:pPath isDirectory:NO];
+    NSURL* rootUrl = [NSURL fileURLWithPath:[NSString stringWithUTF8String:mWebRoot.Get()] isDirectory:YES];
     [mWKWebView loadFileURL:pageUrl allowingReadAccessToURL:rootUrl];
   }
 }
@@ -353,6 +378,8 @@ void IWebViewImpl::ReloadPageContent()
 
 void IWebViewImpl::EvaluateJavaScript(const char* scriptStr, IWebView::completionHandlerFunc func)
 {
+  if (!mWKWebView) return;
+
   if (mWKWebView && ![mWKWebView isLoading])
   {
     [mWKWebView evaluateJavaScript:[NSString stringWithUTF8String:scriptStr] completionHandler:^(NSString *result, NSError *error) {
